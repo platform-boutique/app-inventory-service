@@ -86,6 +86,13 @@ func newPool(t *testing.T, dsn string, maxConns int32) *pgxpool.Pool {
 	return p
 }
 
+// Time in these tests: expiry is decided by the process's wall clock, and the wall clock of the machine these
+// tests were developed on is not stable (it jumps +58 s for ~60 ms every ~5 s and steps back by up to 0.5 s; a
+// hold made inside such a window had expires_at up to 55 s away, which made tests with real sleeps and
+// 100-300 ms TTLs fail about 1 run in 5). So every test runs on an injected fixed clock (setup's default) and
+// moves time with Advance, never with time.Sleep; the few waits that remain only wait for background
+// goroutines, with generous deadlines.
+//
 // clock is a settable clock; with a zero value it follows the real time.
 type clock struct {
 	mu    sync.Mutex
@@ -113,7 +120,11 @@ type env struct {
 	pool *pgxpool.Pool
 	logs *safeBuf
 	dsn  string
+	clk  *clock
 }
+
+// testStart is the fixed time every test starts at (unless it passes its own clock).
+var testStart = time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
 
 // safeBuf is a log sink that is safe for the concurrent writers of the tests.
 type safeBuf struct {
@@ -134,6 +145,9 @@ type options struct {
 func setup(t *testing.T, o options) *env {
 	t.Helper()
 	dsn := freshDB(t)
+	if o.clk == nil {
+		o.clk = fixedClock(testStart)
+	}
 	if o.maxConns == 0 {
 		o.maxConns = 30
 	}
@@ -157,7 +171,7 @@ func newEnv(t *testing.T, p *pgxpool.Pool, dsn string, o options) *env {
 	svc := inventory.NewService(inventory.NewPGStore(p), l, cfg)
 	svc.SetReady(true)
 	t.Cleanup(svc.Wait)
-	return &env{svc: svc, pool: p, logs: logs, dsn: dsn}
+	return &env{svc: svc, pool: p, logs: logs, dsn: dsn, clk: o.clk}
 }
 
 func code(err error) codes.Code { return status.Code(err) }
@@ -399,6 +413,7 @@ func TestLifecycleExactAvailability(t *testing.T) {
 	if r, err := e.reserve("o1", "a", 3, "b", 2); err != nil || !r.Reserved {
 		t.Fatal(r, err)
 	}
+	e.clk.Advance(time.Second)
 	check("reserved o1", 7, 3)
 	if r, err := e.reserve("o2", "a", 7, "b", 3); err != nil || !r.Reserved {
 		t.Fatal(r, err)
@@ -430,8 +445,8 @@ func TestLifecycleExactAvailability(t *testing.T) {
 	if err := e.pool.QueryRow(ctx, `SELECT created_at, updated_at, expires_at FROM reservations WHERE order_id = 'o1'`).Scan(&created, &updated, &expires); err != nil {
 		t.Fatal(err)
 	}
-	if !expires.After(created) || updated.Before(created) {
-		t.Errorf("timestamps: created %v updated %v expires %v", created, updated, expires)
+	if !created.Equal(testStart) || !expires.Equal(testStart.Add(15*time.Minute)) || !updated.Equal(testStart.Add(time.Second)) {
+		t.Errorf("timestamps: created %v updated %v expires %v, want %v, +1s, +15m", created, updated, expires, testStart)
 	}
 }
 
@@ -567,7 +582,7 @@ func TestExpiryReturnsStockAndRefusesCommit(t *testing.T) {
 	if e.dbStock(t, "a") != 1 {
 		t.Fatal("holds not taken")
 	}
-	time.Sleep(400 * time.Millisecond)
+	e.clk.Advance(400 * time.Millisecond)
 	if e.dbStock(t, "a") != 1 {
 		t.Fatal("expiry must be lazy: nothing touched the holds yet")
 	}
@@ -608,12 +623,12 @@ func TestExpiryReturnsStockAndRefusesCommit(t *testing.T) {
 	if _, err := e.reserve("holder", "a", 5); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(400 * time.Millisecond)
+	e.clk.Advance(400 * time.Millisecond)
 	if r, err := e.reserve("taker", "a", 5); err != nil || !r.Reserved {
 		t.Fatalf("Reserve over an expired hold: %v %v", r, err)
 	}
 	// Reserve with the order's OWN expired hold: refused, stock back
-	time.Sleep(400 * time.Millisecond)
+	e.clk.Advance(400 * time.Millisecond)
 	if _, err := e.reserve("taker", "a", 5); code(err) != codes.FailedPrecondition {
 		t.Fatalf("replay of an expired reservation: %v", err)
 	}
@@ -628,7 +643,7 @@ func TestExpiryReturnsStockAndRefusesCommit(t *testing.T) {
 	if err := e.commit("sold"); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(400 * time.Millisecond)
+	e.clk.Advance(400 * time.Millisecond)
 	if n, err := e.svc.SweepOnce(ctx); err != nil || n != 0 {
 		t.Fatalf("sweep: %d %v", n, err)
 	}
@@ -643,14 +658,22 @@ func TestBackgroundSweeperReturnsStockWithoutAnyCall(t *testing.T) {
 	if _, err := e.reserve("o1", "a", 3); err != nil {
 		t.Fatal(err)
 	}
-	// a second service with a short sweep interval runs the sweeper on the same database
+	// a second service with a short sweep interval runs the sweeper on the same database and the same
+	// (injected) clock, so "expired" is decided by Advance, not by how long the machine takes
 	l := logrus.New()
 	l.Out = &safeBuf{}
-	svc := inventory.NewService(inventory.NewPGStore(e.pool), l, inventory.Config{ReservationTTL: time.Minute, SweepEvery: 50 * time.Millisecond})
+	svc := inventory.NewService(inventory.NewPGStore(e.pool), l, inventory.Config{ReservationTTL: time.Minute, SweepEvery: 20 * time.Millisecond, Now: e.clk.Now})
 	svc.SetReady(true)
 	sctx, stop := context.WithCancel(ctx)
 	svc.RunSweeper(sctx)
-	deadline := time.Now().Add(5 * time.Second)
+	time.Sleep(200 * time.Millisecond) // about ten sweeps happen; the hold is not expired, so none may touch it
+	if e.dbStock(t, "a") != 0 || e.dbStatus(t, "o1") != "RESERVED" {
+		stop()
+		svc.Wait()
+		t.Fatalf("swept before expiry: a=%d status=%s", e.dbStock(t, "a"), e.dbStatus(t, "o1"))
+	}
+	e.clk.Advance(200 * time.Millisecond) // now it is expired
+	deadline := time.Now().Add(30 * time.Second)
 	for e.dbStock(t, "a") != 3 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -765,7 +788,7 @@ func TestMultiLineReservationsInOppositeOrderDoNotDeadlock(t *testing.T) {
 		for i, it := range items {
 			in[i] = inventory.Item{ProductID: it.ProductId, Quantity: it.Quantity}
 		}
-		r, err := store.Reserve(ctx, order, in, time.Now(), time.Minute)
+		r, err := store.Reserve(ctx, order, in, e.clk.Now(), time.Minute)
 		return r.Reserved, err
 	})
 	for _, id := range ids {
@@ -815,13 +838,13 @@ func TestMixedConcurrentOperationsKeepTheBooksBalanced(t *testing.T) {
 					t.Errorf("release %s: %v", o, err)
 				}
 			case 2: // replay racing with a release of the same order
-				go func() { _ = e.release(o) }()
+				wg.Add(1) // wg is still above zero here (this goroutine is counted)
+				go func() { defer wg.Done(); _ = e.release(o) }()
 				_, _ = e.reserve(o, items...)
 			}
 		}(i)
 	}
-	wg.Wait()
-	time.Sleep(200 * time.Millisecond) // the fire-and-forget releases
+	wg.Wait() // includes the releases that race with the replays
 	e.checkConservation(t, initial)
 }
 
