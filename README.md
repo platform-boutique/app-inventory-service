@@ -74,7 +74,7 @@ Every variable read by the code (`grep -rn 'Getenv\|getenv'` over `cmd/` and `in
 
 The OTLP exporters of the OpenTelemetry Go SDK also read their own standard `OTEL_EXPORTER_OTLP_*` variables (headers, TLS, timeout); they are not read by this service's code and were not tested. `OTEL_TRACES_SAMPLER` is **not** honoured: the sampler is fixed to always-on (`otlp.go`). `LOG_LEVEL` does not exist: the log level is logrus' default (info).
 
-Test-only variables (not read by the service): `TEST_DATABASE_URL` for the integration tests, `CATALOG_SEED` for `TestSeedMatchesCatalog` and `tools/sync_stock.py`.
+Test-only variables (not read by the service): `TEST_DATABASE_URL` for the integration tests, `CATALOG_SEED` for `TestSeedMatchesCatalog` (the Python tool takes the path as an argument instead).
 
 Start-up: the gRPC server listens at once (health `NOT_SERVING`); a background loop runs the goose migrations (under goose's Postgres advisory lock) and the seed, retrying every 2 s until the database is reachable, then starts the sweep.
 
