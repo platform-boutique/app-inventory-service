@@ -1,0 +1,25 @@
+site_name: inventory-service
+site_description: >-
+  A gRPC service that owns the stock of the Everly shop and the reservations checkout places while an order is paid and shipped.
+repo_url: https://github.com/platform-boutique/app-inventory-service
+edit_uri: edit/main/docs/
+nav:
+  - Overview: index.md
+  - Architecture: architecture.md
+  - API: api.md
+  - Configuration: configuration.md
+  - Observability: observability.md
+  - Operations: operations.md
+  - Develop & test: development.md
+  - Decisions:
+      - "1. One Postgres per service": adr/0001-one-postgres-per-service.md
+      - "2. Reservations with expiry": adr/0002-reservations-with-expiry.md
+      - "3. Seed inserts only missing products": adr/0003-seed-inserts-only-missing-products.md
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+plugins:
+  - techdocs-core
