@@ -60,6 +60,7 @@ Every variable read by the code (`grep -rn 'Getenv\|getenv'` over `cmd/` and `in
 | `PORT` | `8087` | no | gRPC listen port. The `healthcheck` subcommand reads it too |
 | `RESERVATION_TTL` | `15m` | no | How long a RESERVED hold lives (Go duration). Invalid or non-positive: the process exits |
 | `SWEEP_INTERVAL` | `1m` | no | How often the background sweep looks for expired holds (Go duration; added so tests and demos need not wait a minute). Invalid or non-positive: the process exits |
+| `REQUEST_TIMEOUT` | `5s` | no | Server-side bound of every unary call (Go duration, at least `100ms`; `0` switches the bound off). A call without a deadline gets this one, a longer caller deadline is shortened to it; the context reaches every database query. A value that does not parse keeps `5s` with a warning |
 | `HOSTNAME` | OS hostname | no | Used as `service.instance.id` (the pod name in Kubernetes) |
 | `METRICS_PORT` | `9090` | no | Port of the Prometheus `/metrics` endpoint (scraped by Alloy). A value that is not a port falls back to `9090` with a warning |
 | `PPROF_ADDR` | unset (no pprof) | no | `host:port` of a separate pprof listener, e.g. `127.0.0.1:6060`. Off unless set; never expose it. pprof is never served on the metrics port |
