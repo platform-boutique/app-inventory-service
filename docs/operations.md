@@ -12,9 +12,9 @@ grpcurl -plaintext localhost:8087 grpc.health.v1.Health/Check
 
 ## Shutdown
 
-SIGTERM or SIGINT: health goes `NOT_SERVING` so probes fail first; `GracefulStop` with a 10 s cap, then `Stop`; the sweep stops; the metrics server is shut down (5 s); telemetry is flushed (5 s); the pool is closed; exit 0.
+SIGTERM or SIGINT: health goes `NOT_SERVING` so probes fail first; `GracefulStop` with a 5 s cap, then `Stop`; the sweep stops; the pool is closed; telemetry and profiles are flushed (cut off after 4 s) and the metrics listener stops; exit 0. At most 9 s in total, inside the 10 s of CODE-04.
 
-Measured earlier by the author: `docker stop` exit code 0 (image smoke run). Not re-measured with a blackholed OTLP endpoint.
+Measured: with OTLP and Pyroscope pointed at a listener that never answers (and the database unreachable) the binary exited 0 about 4.0 s after SIGTERM. Earlier, by the author: `docker stop` exit code 0 (image smoke run). Not measured again in a container or with a reachable database.
 
 ## Scaling and replicas
 
@@ -32,7 +32,7 @@ Measured earlier by the author: `docker stop` exit code 0 (image smoke run). Not
 | Restart | stock is NOT reset: the seed only inserts products without a row |
 | Checkout dies after `Reserve` | the hold expires after `RESERVATION_TTL` (default 15 m) and the stock returns by the next call touching the products or by the sweep |
 | Invalid `RESERVATION_TTL`, `SWEEP_INTERVAL` | process exits at start-up |
-| Collector unreachable | telemetry export fails in the background; start-up does not depend on it |
+| Collector unreachable | telemetry export fails in the background (bounded queues, spans and logs are dropped); start-up does not depend on it; the flush on SIGTERM is cut off after 4 s |
 
 ## Clock behaviour
 
