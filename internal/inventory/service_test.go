@@ -308,7 +308,7 @@ func TestLogsOnlyOrderIDAndCounts(t *testing.T) {
 	_, _ = env.svc.Commit(ctx, &pb.CommitRequest{OrderId: "o1"})
 	_, _ = env.svc.Release(ctx, &pb.ReleaseRequest{OrderId: "o2"})
 	out := env.logs.String()
-	if !strings.Contains(out, "order=o1") || !strings.Contains(out, "shortages=1") {
+	if !strings.Contains(out, `"order_id":"o1"`) || !strings.Contains(out, `"shortages":1`) {
 		t.Fatalf("control failed: the log does not show what it should:\n%s", out)
 	}
 	if strings.Contains(out, "secret-product-sku") {

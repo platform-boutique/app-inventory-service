@@ -1054,7 +1054,7 @@ func TestLogsOnlyOrderIDsAndCounts(t *testing.T) {
 	_ = e.release("log-2")
 	_ = e.release("log-1")
 	out := e.logs.String()
-	if !strings.Contains(out, "order=log-1") || !strings.Contains(out, "reserved=false shortages=1") {
+	if !strings.Contains(out, "order_id=log-1") || !strings.Contains(out, "reserved=false shortages=1") {
 		t.Fatalf("control failed: the log does not show what it should:\n%s", out)
 	}
 	if strings.Contains(out, "very-secret-sku") {

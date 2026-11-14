@@ -74,7 +74,7 @@ func (s *Service) checkReady() error {
 func (s *Service) clock() time.Time { return s.now().UTC().Truncate(time.Microsecond) }
 
 // toStatus maps internal errors to gRPC status codes without leaking SQL details to the caller.
-func (s *Service) toStatus(method string, err error) error {
+func (s *Service) toStatus(ctx context.Context, method string, err error) error {
 	switch {
 	case errors.Is(err, ErrInvalid):
 		return status.Error(codes.InvalidArgument, err.Error())
@@ -91,10 +91,10 @@ func (s *Service) toStatus(method string, err error) error {
 	case errors.Is(err, context.DeadlineExceeded):
 		return status.Error(codes.DeadlineExceeded, "deadline exceeded")
 	case errors.Is(err, ErrUnavailable):
-		s.log.Warnf("[%s] database unavailable: %v", method, err)
+		s.log.WithContext(ctx).WithError(err).Warnf("[%s] database unavailable", method)
 		return status.Error(codes.Unavailable, "database unavailable")
 	default:
-		s.log.Errorf("[%s] error: %v", method, err)
+		s.log.WithContext(ctx).WithError(err).Errorf("[%s] error", method)
 		return status.Error(codes.Internal, "internal error")
 	}
 }
@@ -106,11 +106,11 @@ func (s *Service) GetStock(ctx context.Context, req *pb.GetStockRequest) (*pb.Ge
 	}
 	ids, err := ValidateStockIDs(req.GetProductIds())
 	if err != nil {
-		return nil, s.toStatus("GetStock", err)
+		return nil, s.toStatus(ctx, "GetStock", err)
 	}
 	levels, err := s.store.GetStock(ctx, ids, s.clock())
 	if err != nil {
-		return nil, s.toStatus("GetStock", err)
+		return nil, s.toStatus(ctx, "GetStock", err)
 	}
 	out := make([]*pb.StockLevel, len(levels))
 	for i, l := range levels {
@@ -126,13 +126,13 @@ func (s *Service) Reserve(ctx context.Context, req *pb.ReserveRequest) (*pb.Rese
 	}
 	orderID, items, err := ValidateReserve(req)
 	if err != nil {
-		return nil, s.toStatus("Reserve", err)
+		return nil, s.toStatus(ctx, "Reserve", err)
 	}
 	res, err := s.store.Reserve(ctx, orderID, items, s.clock(), s.ttl)
 	if err != nil {
-		return nil, s.toStatus("Reserve", err)
+		return nil, s.toStatus(ctx, "Reserve", err)
 	}
-	s.log.Infof("reserve order=%s lines=%d reserved=%v shortages=%d", orderID, len(items), res.Reserved, len(res.Shortages))
+	s.log.WithContext(ctx).WithFields(logrus.Fields{"order_id": orderID, "lines": len(items), "reserved": res.Reserved, "shortages": len(res.Shortages)}).Info("reserve")
 	out := &pb.ReserveResponse{Reserved: res.Reserved}
 	for _, sh := range res.Shortages {
 		out.Shortages = append(out.Shortages, &pb.Shortage{ProductId: sh.ProductID, Requested: sh.Requested, Available: sh.Available})
@@ -147,12 +147,12 @@ func (s *Service) Commit(ctx context.Context, req *pb.CommitRequest) (*pb.Commit
 	}
 	orderID, err := ValidateOrderID(req.GetOrderId())
 	if err != nil {
-		return nil, s.toStatus("Commit", err)
+		return nil, s.toStatus(ctx, "Commit", err)
 	}
 	if err := s.store.Commit(ctx, orderID, s.clock()); err != nil {
-		return nil, s.toStatus("Commit", err)
+		return nil, s.toStatus(ctx, "Commit", err)
 	}
-	s.log.Infof("commit order=%s", orderID)
+	s.log.WithContext(ctx).WithField("order_id", orderID).Info("commit")
 	return &pb.CommitResponse{}, nil
 }
 
@@ -163,12 +163,12 @@ func (s *Service) Release(ctx context.Context, req *pb.ReleaseRequest) (*pb.Rele
 	}
 	orderID, err := ValidateOrderID(req.GetOrderId())
 	if err != nil {
-		return nil, s.toStatus("Release", err)
+		return nil, s.toStatus(ctx, "Release", err)
 	}
 	if err := s.store.Release(ctx, orderID, s.clock()); err != nil {
-		return nil, s.toStatus("Release", err)
+		return nil, s.toStatus(ctx, "Release", err)
 	}
-	s.log.Infof("release order=%s", orderID)
+	s.log.WithContext(ctx).WithField("order_id", orderID).Info("release")
 	return &pb.ReleaseResponse{}, nil
 }
 
@@ -207,7 +207,7 @@ func (s *Service) RunSweeper(ctx context.Context) {
 			cancel()
 			switch {
 			case err != nil && ctx.Err() == nil:
-				s.log.Warnf("sweep of expired reservations failed after releasing %d: %v", n, err)
+				s.log.WithError(err).Warnf("sweep of expired reservations failed after releasing %d", n)
 			case n > 0:
 				s.log.Infof("sweep released %d expired reservation(s)", n)
 			}
