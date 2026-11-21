@@ -13,7 +13,7 @@ flowchart LR
     prom[Prometheus scrape :9090] -.-> inv
 ```
 
-inventory-service calls no other service. The callers are taken from the workspace `local/compose.yaml` (`INVENTORY_SERVICE_ADDR` on checkout and frontend) and the earlier README; they were not re-verified in their code for this page.
+inventory-service calls no other service. The callers are the frontend (`GetStock`) and checkout-service (`Reserve`, `Commit`, `Release`), both only when `INVENTORY_SERVICE_ADDR` is set; checked against the `origin/main` code of the callers on 2026-11-21.
 
 ## Main flow: placing an order
 
