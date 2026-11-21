@@ -8,7 +8,7 @@ Context diagram and the main flow as sequence diagram: [`docs/architecture.md`](
 
 | | |
 |---|---|
-| Language / runtime | Go 1.26 (`go.mod`: `go 1.26.0`, `toolchain go1.26.11`), static binary, `CGO_ENABLED=0` |
+| Language / runtime | Go 1.26 (`go.mod`: `go 1.26.11`), static binary, `CGO_ENABLED=0` |
 | Image | built locally only: `platform-demo/inventory-service:local` (`Dockerfile`, user `10001:10001`) |
 | Ports | gRPC `8087` (plaintext), HTTP `9090` (`/metrics`, scraped by Alloy; pprof only on its own `PPROF_ADDR` listener) |
 | Health | `grpc.health.v1.Health/Check` on `8087`, `NOT_SERVING` until the migrations and the seed are done and whenever the database does not answer a ping (every 5 s) |
@@ -128,15 +128,18 @@ CATALOG_SEED=/path/to/products.json go test ./internal/inventory -run TestSeedMa
 
 Requirements: Go 1.26 (`GOTOOLCHAIN=auto` fetches it), Docker for integration tests, [`grpcurl`](https://github.com/fullstorydev/grpcurl), Python 3 for the sync tool. Layout: `cmd/server/` (entry point, config, telemetry, health), `internal/inventory/` (service, store, validation, migrations, seed), `data/` (embedded seed), `tools/sync_stock.py`, `proto/`, `tests/integration/`.
 
-| Step | Command | Result on 2026-11-13 |
+| Step | Command | Result on 2026-11-13 (rows marked 2026-11-21 were run again on `origin/main`) |
 |---|---|---|
-| Vet + unit tests | `go vet ./... && go test -race -count=1 ./...` | run, passed |
-| Format | `gofmt -l .` | run, no files listed |
+| Vet + unit tests | `go vet ./... && go test -race -count=1 ./...` | run, passed; run again 2026-11-21: passed |
+| Format | `gofmt -l .` | run, no files listed; run again 2026-11-21: none |
 | Lint | `golangci-lint run ./...` (config `.golangci.yaml`, v2 default linters) | run with golangci-lint v2.11.4, 0 issues; also with `--build-tags integration`, 0 issues. CI pins v2.14.0: not run |
-| Integration (Postgres) | see below | not run today (earlier runs by the author are in `docs/development.md`) |
+| Integration (Postgres) | see below | run on 2026-11-21 against a throwaway `postgres:17-alpine`: passed (earlier runs by the author are recorded in `docs/development.md`) |
 | Vulnerability / security scan | `govulncheck ./...`, `gosec -exclude-generated ./...` | not run today |
 | Image | `docker build -t platform-demo/inventory-service:local .` | not run today |
-| Docs | `mkdocs build --strict` (mkdocs 1.6.1 + mkdocs-techdocs-core 1.7.1, Python 3.12 venv made with uv) | run, passed |
+| Docs | `mkdocs build --strict` (mkdocs 1.6.1 + mkdocs-techdocs-core 1.7.1, Python 3.12 venv made with uv) and the link check `python3 -I tools/check-md-links.py .` from `platform-demo-workflows` (relative links in `README.md` and `docs/`) | run, passed; run again 2026-11-21, both passed |
+| Image scan | `trivy image --severity CRITICAL,HIGH --exit-code 1 platform-demo/inventory-service:local` | not run today |
+| Secret scan | `pre-commit run --all-files` (`.pre-commit-config.yaml`, gitleaks) or `gitleaks git --redact` | run 2026-11-21 with the gitleaks binary of the pre-commit cache (`gitleaks git --redact`, full history, 29 commits): no leaks found |
+| Workflow lint | `actionlint` | run 2026-11-21 (actionlint 1.7.12), no findings |
 
 Integration tests (build tag `integration`, run on an injected clock, each test creates and drops its own database):
 
