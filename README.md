@@ -88,7 +88,7 @@ Start-up: the gRPC server listens at once (health `NOT_SERVING`); a background l
 | Signal | Implementation | Destination |
 |---|---|---|
 | **Traces** | OpenTelemetry (`otelgrpc` handlers), OTLP/gRPC exporter (batch processor, queue bounded at 2048), W3C TraceContext + Baggage propagated to every downstream call. Sampler from `OTEL_TRACES_SAMPLER` (SDK default `parentbased_always_on`) | Alloy `:4317` -> Tempo |
-| **Metrics** | Prometheus default registry: `grpc_server_*` (go-grpc-prometheus with handling-time histogram), Go runtime and process metrics. Served as Prometheus text on `:9090/metrics` (`METRICS_PORT`) and, because the same registry is bridged into OpenTelemetry, also pushed over OTLP every 15 s (metric names identical). Plus `build_info{service,version,commit} 1` | Alloy scrapes `:9090` -> Mimir |
+| **Metrics** | Prometheus default registry: `grpc_server_*` (go-grpc-prometheus with handling-time histogram), Go runtime and process metrics. Served as Prometheus text on `:9090/metrics` (`METRICS_PORT`) and, because the same registry is bridged into OpenTelemetry, also pushed over OTLP every 15 s (metric names identical). Plus `build_info{service,version,commit} 1`, the database pool (`db_pool_*`) and `inventory_reservations_total{outcome}` | Alloy scrapes `:9090` -> Mimir |
 | **Logs** | `logrus`, one JSON object per line on stdout, plus an OTLP/gRPC hook (`otellogrus`) | stdout -> Alloy -> Loki; OTLP -> Alloy -> Loki |
 | **Profiles** | Pyroscope Go SDK (CPU, alloc/in-use objects and space, goroutines, mutex, block), only with `PYROSCOPE_ADDR`; tags `service_name`, `version`, `environment` | Pyroscope |
 
@@ -104,7 +104,7 @@ Start-up: the gRPC server listens at once (health `NOT_SERVING`); a background l
 
 **Graceful shutdown** (SIGTERM or SIGINT): health goes `NOT_SERVING`, `GracefulStop` with a 5 s cap (then `Stop`), the sweep stops, then the telemetry flush runs, cut off after 4 s, the pool is closed: the process exits within 9 s even when the collector is blackholed. Run against a listener that never answers (OTLP and Pyroscope both pointed at it, database unreachable) the binary exited 0 about 4 s after SIGTERM (smoke run, not part of the unit tests; with a reachable database not re-measured).
 
-**Not there yet** (standards section 6): spans for Postgres calls; `build_info` is there, but DB pool stats, business counters (reservations by outcome, shortages, expired holds released) and stock levels are not. A handler logs the order id and counts only (`message: "reserve"` with `order_id`, `lines`, `reserved`, `shortages`; `commit`/`release` with `order_id`; `sweep released 3 expired reservation(s)`); product ids and quantities are never logged (a unit and an integration test check that).
+**Business counter (OBS-20):** `inventory_reservations_total{outcome}` counts every Reserve call by outcome: `reserved`, `shortage`, `conflict` (same order id with other items), `rejected` (invalid request, or the reservation was already released/committed), `unavailable` (database), `canceled` (client gave up or deadline) and `error`; the series start at 0. An idempotent replay of a reservation counts as `reserved` again. Database calls have spans (otelpgx) and the pool series above. **Not there:** a counter of expired holds released by the sweep and stock levels as metrics (the sweep logs `sweep released N expired reservation(s)`; levels are served by `GetStock`). A handler logs the order id and counts only (`message: "reserve"` with `order_id`, `lines`, `reserved`, `shortages`; `commit`/`release` with `order_id`); product ids and quantities are never logged (a unit and an integration test check that).
 
 Example query (not run against a live backend): `sum by (grpc_method, grpc_code) (rate(grpc_server_handled_total{grpc_service="hipstershop.inventory.InventoryService"}[5m]))`.
 
@@ -132,12 +132,12 @@ Requirements: Go 1.26 (`GOTOOLCHAIN=auto` fetches it), Docker for integration te
 |---|---|---|
 | Vet + unit tests | `go vet ./... && go test -race -count=1 ./...` | run, passed; run again 2026-11-21: passed |
 | Format | `gofmt -l .` | run, no files listed; run again 2026-11-21: none |
-| Lint | `golangci-lint run ./...` (config `.golangci.yaml`, v2 default linters) | run with golangci-lint v2.11.4, 0 issues; also with `--build-tags integration`, 0 issues. CI pins v2.14.0: not run |
-| Integration (Postgres) | see below | run on 2026-11-21 against a throwaway `postgres:17-alpine`: passed (earlier runs by the author are recorded in `docs/development.md`) |
-| Vulnerability / security scan | `govulncheck ./...`, `gosec -exclude-generated ./...` | not run today |
-| Image | `docker build -t platform-demo/inventory-service:local .` | not run today |
+| Lint | `golangci-lint run ./...` (config `.golangci.yaml`, v2 default linters) | run 2026-11-22 with golangci-lint v2.14.0 (the version CI pins), 0 issues; also with `--build-tags integration`, 0 issues |
+| Integration (Postgres) | see below | run on 2026-11-22 against a throwaway `postgres:17-alpine` with `-race`: passed, including the new test of the reservations counter (earlier runs by the author are recorded in `docs/development.md`) |
+| Vulnerability / security scan | `govulncheck ./...`, `gosec -exclude-generated ./...` | run 2026-11-22: govulncheck `No vulnerabilities found`; gosec 0 issues (19 files, 2380 lines); gitleaks over the full history: no leaks |
+| Image | `docker build -t platform-demo/inventory-service:local .` | run 2026-11-22: govulncheck `No vulnerabilities found`; gosec 0 issues (19 files, 2380 lines); gitleaks over the full history: no leaks |
 | Docs | `mkdocs build --strict` (mkdocs 1.6.1 + mkdocs-techdocs-core 1.7.1, Python 3.12 venv made with uv) and the link check `python3 -I tools/check-md-links.py .` from `platform-demo-workflows` (relative links in `README.md` and `docs/`) | run, passed; run again 2026-11-21, both passed |
-| Image scan | `trivy image --severity CRITICAL,HIGH --exit-code 1 platform-demo/inventory-service:local` | not run today |
+| Image scan | `trivy image --severity CRITICAL,HIGH --exit-code 1 platform-demo/inventory-service:local` | run 2026-11-22: govulncheck `No vulnerabilities found`; gosec 0 issues (19 files, 2380 lines); gitleaks over the full history: no leaks |
 | Secret scan | `pre-commit run --all-files` (`.pre-commit-config.yaml`, gitleaks) or `gitleaks git --redact` | run 2026-11-21 with the gitleaks binary of the pre-commit cache (`gitleaks git --redact`, full history, 29 commits): no leaks found |
 | Workflow lint | `actionlint` | run 2026-11-21 (actionlint 1.7.12), no findings |
 
@@ -169,8 +169,8 @@ Regenerate the Go code after editing the proto: `protoc -I proto --go_out=proto 
 - A `Commit` that arrives after `expires_at` is refused even if the sweep has not run yet (the stock is returned in that call).
 - Expiry follows the wall clock of the process: no protection against clock skew between replicas or clock steps. With the default 15 minutes this is harmless; with tiny TTLs it is not (on the developer's WSL2 host about 1 hold in 100 got an `expires_at` far from the intended one with a 100 ms TTL). The stock books stay correct either way. Details: [`docs/operations.md`](docs/operations.md).
 - Reserved quantities are not tied to a price or a user.
-- No spans for database calls, no DB pool stats or business counters. The version/commit is logged at start and in `build_info`, but the image build sets no ldflags, so a container reports `dev` unless `SERVICE_VERSION` is set.
-- Not run: OTLP exporters against a real collector and Pyroscope, arm64 build, `govulncheck`, several replicas, any load or timing measurement beyond the 200-request oversell test.
+- No counter for expired holds released by the sweep and no stock-level metric (see Observability). The version/commit come from the image build-args `SERVICE_VERSION` / `SERVICE_COMMIT` (set by the shared pipeline); a plain `docker build` without them reports `dev`.
+- Not run: OTLP exporters against a real collector and Pyroscope, arm64 build (amd64 only by decision), several replicas, any load or timing measurement beyond the 200-request oversell test.
 
 ## License
 

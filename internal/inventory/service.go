@@ -126,9 +126,11 @@ func (s *Service) Reserve(ctx context.Context, req *pb.ReserveRequest) (*pb.Rese
 	}
 	orderID, items, err := ValidateReserve(req)
 	if err != nil {
+		reservationsTotal.WithLabelValues(reserveOutcome(ReserveResult{}, err)).Inc()
 		return nil, s.toStatus(ctx, "Reserve", err)
 	}
 	res, err := s.store.Reserve(ctx, orderID, items, s.clock(), s.ttl)
+	reservationsTotal.WithLabelValues(reserveOutcome(res, err)).Inc()
 	if err != nil {
 		return nil, s.toStatus(ctx, "Reserve", err)
 	}
