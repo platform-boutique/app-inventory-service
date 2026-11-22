@@ -7,7 +7,7 @@ Commands run on 2026-11-13 for the standards change (host: Go 1.22 with `GOTOOLC
 | Command | Result |
 |---|---|
 | `go vet ./... && go test -race -count=1 ./...` | passed (2 packages with tests) |
-| `golangci-lint run ./...` and `golangci-lint run --build-tags integration ./...` (golangci-lint v2.11.4, `.golangci.yaml`) | 0 issues. The shared pipeline pins v2.14.0: not run |
+| `golangci-lint run ./...` and `golangci-lint run --build-tags integration ./...` (golangci-lint v2.14.0 as pinned by the shared pipeline, `.golangci.yaml`) | 0 issues, run 2026-11-22 |
 | `gofmt -l .` | no files listed |
 | `mkdocs build --strict` (mkdocs 1.6.1, mkdocs-techdocs-core 1.7.1, Python 3.12 venv made with uv) | passed |
 
