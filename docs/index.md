@@ -12,6 +12,6 @@ A gRPC service that owns the stock of the Everly shop: how many pieces of each p
 | Ports | gRPC `8087`, HTTP `9090` (`/metrics`, scraped by Alloy) |
 | State | its own Postgres (`stock`, `reservations`, `reservation_items`) |
 | Called by | checkout-service, frontend |
-| Status | not deployed anywhere yet; no pipeline, no Helm chart |
+| Status | shared CI pipeline with Publish; Helm chart in platform-demo-helm; not deployed in any environment yet |
 
 Pages: [architecture](architecture.md), [API](api.md), [configuration](configuration.md), [observability](observability.md), [operations](operations.md), [development](development.md), [decisions](adr/0001-one-postgres-per-service.md).
